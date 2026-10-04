@@ -44,7 +44,8 @@ android {
         applicationId = "com.xycz.simple_live"
         // You can update the following values to match your application needs.
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
-        minSdk = flutter.minSdkVersion
+        // Minimum supported Android version: 7.0 (API 24).
+        minSdk = 24
         multiDexEnabled true
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()

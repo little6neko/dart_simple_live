@@ -17,8 +17,6 @@ jobs:
     steps:
       # 签出代码
       - uses: actions/checkout@v4
-        with:
-          ref: dev
 
       # APK签名设置
       - name: Download Android keystore
@@ -45,7 +43,7 @@ jobs:
       - name: Flutter action
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
+          flutter-version: '3.22.3'
           cache: true 
 
       # 打开MAC Desktop支持
@@ -56,7 +54,7 @@ jobs:
       - name: Restore packages
         run: |
           cd simple_live_app
-          flutter pub get
+          flutter pub get --enforce-lockfile
 
       # 安装appdmg npm install -g appdmg
       - name: Install appdmg
@@ -160,13 +158,11 @@ jobs:
     steps:
       # 签出代码
       - uses: actions/checkout@v4
-        with:
-          ref: dev
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.x"
+          flutter-version: "3.22.3"
           cache: true
       # 安装依赖
       - name: Update apt-get
@@ -180,7 +176,7 @@ jobs:
       - name: Restore Packages
         run: |
           cd simple_live_app
-          flutter pub get
+          flutter pub get --enforce-lockfile
       # 设置flutter_distributor环境
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
@@ -203,26 +199,25 @@ jobs:
 
   # 打包Windows
   build-windows:
-    runs-on: windows-latest
+    # Flutter 3.22 使用 Visual Studio 2022，避免 latest 镜像升级后不兼容。
+    runs-on: windows-2022
     permissions:
       contents: write
     steps:
       # 签出代码
       - uses: actions/checkout@v4
-        with:
-          ref: dev
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.x"
+          flutter-version: "3.22.3"
           cache: true
       - name: Enable Flutter Desktop
         run: flutter config --enable-windows-desktop
       - name: Restore Packages
         run: |
           cd simple_live_app
-          flutter pub get
+          flutter pub get --enforce-lockfile
       # 设置flutter_distributor环境
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
@@ -241,3 +236,54 @@ jobs:
             simple_live_app/build/dist/*/*.zip
         #完成
       - run: echo "🍏 Windows job's status is ${{ job.status }}."
+
+  publish-release:
+    needs: [build-mac-ios-android, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      # 手机和 TV 的 APK 原始文件名相同，添加平台前缀避免覆盖。
+      - name: Prepare release assets
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+
+          root = Path("artifacts")
+          destination = Path("release-assets")
+          destination.mkdir()
+          for platform in ("android", "android_tv", "ios", "mac", "linux", "windows"):
+              files = sorted(path for path in (root / platform).rglob("*") if path.is_file())
+              if not files:
+                  raise RuntimeError(f"Missing build artifacts: {platform}")
+              for source in files:
+                  target = destination / f"{platform}-{source.name}"
+                  if target.exists():
+                      raise RuntimeError(f"Duplicate release asset: {target.name}")
+                  shutil.copy2(source, target)
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          title="${GITHUB_REF_NAME} - Build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          printf 'Branch: %s\nCommit: %s\nWorkflow: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_SERVER_URL" \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.md
+          gh release create "$tag" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "$title" \
+            --notes-file release-notes.md \
+            --draft
+          gh release edit "$tag" --draft=false --prerelease=false --latest
